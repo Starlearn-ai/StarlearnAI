@@ -124,7 +124,6 @@
     "vaul": "^0.9.3",
     "web-vitals": "^2.1.4",
     "youtube-api": "^3.0.2",
-    "Youtube-api": "^1.2.1",
     "youtube-transcript": "^1.0.6",
     "zod": "^3.23.8"
   },
