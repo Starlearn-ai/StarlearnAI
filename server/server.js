@@ -7,7 +7,7 @@ import cors from 'cors';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
 import gis from 'g-i-s';
-import youtubesearchapi from 'youtube-api';
+import youtubesearchapi from 'youtube-api'; // Corrected package name
 import { YoutubeTranscript } from 'youtube-transcript';
 import { GoogleGenerativeAI, HarmBlockThreshold, HarmCategory } from '@google/generative-ai';
 import { createApi } from 'unsplash-js';
