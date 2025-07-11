@@ -1,8 +1,8 @@
 //BRAND
 export const appName = 'StarlearnAI';
 export const companyName = 'STARLEARNAI LTD';
-export const websiteURL = 'http://localhost:8083';
-export const serverURL = 'http://localhost:5000';
+export const websiteURL = 'https://ai-powered-68434.web.app';
+export const serverURL = 'https://starlearnai.onrender.com';
 export const appLogo = 'https://firebasestorage.googleapis.com/v0/b/ai-powered-68434.firebasestorage.app/o/favicon.jpg?alt=media&token=173e5b98-9466-4d35-a20d-7ac9704c8431';
 export const razorpayEnabled = false;
 export const paypalEnabled = true;
