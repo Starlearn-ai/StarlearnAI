@@ -1,14 +1,17 @@
+// vite.config.ts
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
-import { componentTagger } from "lovable-tagger";
-import { VitePWA } from 'vite-plugin-pwa'
+// import { componentTagger } from "lovable-tagger"; // Still commented out as per previous resolution
+import { VitePWA } from 'vite-plugin-pwa';
+import basicSsl from '@vitejs/plugin-basic-ssl'; // For local HTTPS
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
     port: 8080,
+    https: {} // CHANGED: Provide an empty object for 'https' to satisfy type checker
   },
   plugins: [
     react(),
@@ -16,9 +19,9 @@ export default defineConfig(({ mode }) => ({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png'],
       manifest: {
-        name: 'AiCourse',
-        short_name: 'AiCourse',
-        description: 'Ai Text To Course Generator',
+        name: 'StarlearnAI',
+        short_name: 'StarlearnAI',
+        description: 'The Course Alchemist',
         theme_color: '#007BFF',
         icons: [
           {
@@ -51,9 +54,10 @@ export default defineConfig(({ mode }) => ({
         ]
       }
     }),
-    mode === 'development' &&
-    componentTagger(),
+    basicSsl(), // Add basicSsl plugin
+    // mode === 'development' && componentTagger(), // Still commented out
   ].filter(Boolean),
+
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

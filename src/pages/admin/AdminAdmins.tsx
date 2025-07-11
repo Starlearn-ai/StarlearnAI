@@ -20,7 +20,7 @@ const AdminAdmins = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
 
-  // Filtered data using memoization for better performance
+  // Filtered data using memorization for better performance
   const filteredData = useMemo(() => {
     const query = searchQuery.toLowerCase().trim();
     return users.filter((user) => {

@@ -124,3 +124,29 @@
 html {
   scroll-behavior: smooth;
 }
+
+/* Add this to your global CSS file */
+.feature-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit; /* Use the parent's border-radius */
+  padding: 1px; /* This padding will act as the border thickness */
+  background: radial-gradient(
+    400px circle at var(--mouse-x) var(--mouse-y),
+    rgba(93, 22, 237, 0.3), /* Your primary color with opacity */
+    transparent 80%
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s ease-in-out;
+}
+
+.feature-card:hover::before {
+  opacity: 1;
+}

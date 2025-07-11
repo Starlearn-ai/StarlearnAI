@@ -31,8 +31,8 @@ const AdminContacts = () => {
   const filteredData = useMemo(() => {
     const query = searchQuery.toLowerCase().trim();
     return data.filter((user) => {
-      const nameMatch = user.fname?.toLowerCase().includes(query);
-      const subMatch = user.lname?.toLowerCase().includes(query);
+      const nameMatch = user.name?.toLowerCase().includes(query);
+      const subMatch = user.subject?.toLowerCase().includes(query);
       const emailMatch = user.email?.toLowerCase().includes(query);
       const msgMatch = user.msg?.toLowerCase().includes(query);
       return nameMatch || emailMatch || msgMatch || subMatch;
@@ -57,8 +57,8 @@ const AdminContacts = () => {
     return `${day}/${month}/${year}`;
   };
 
-  function sendReply(email: string, subject: string) {
-    window.location.href = `mailto:${email}?subject=${encodeURIComponent(subject)}`;
+  function sendReply(email: string, subjectVal: string) {
+    window.location.href = `mailto:${email}?subject=Re: ${encodeURIComponent(subjectVal)}`;
   }
 
   return (
@@ -185,9 +185,9 @@ const AdminContacts = () => {
               <TableBody>
                 {filteredData.map((contact) => (
                   <TableRow key={contact._id}>
-                    <TableCell className="font-medium">{contact.fname}</TableCell>
+                    <TableCell className="font-medium">{contact.name}</TableCell>
                     <TableCell>{contact.email}</TableCell>
-                    <TableCell>{contact.lname}</TableCell>
+                    <TableCell>{contact.subject}</TableCell>
                     <TableCell>{contact.msg}</TableCell>
                     <TableCell>{formatDate(contact.date)}</TableCell>
                     <TableCell className="text-right">
@@ -199,7 +199,7 @@ const AdminContacts = () => {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => sendReply(contact.email, contact.lname)}>
+                          <DropdownMenuItem onClick={() => sendReply(contact.email, contact.subject)}>
                             <Reply className="mr-2 h-4 w-4" />
                             Reply
                           </DropdownMenuItem>

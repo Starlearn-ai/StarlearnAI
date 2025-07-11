@@ -180,7 +180,7 @@ const QuizPage = () => {
                         <Button onClick={() => window.history.back()} variant="ghost" size="sm" asChild>
                             <span>
                                 <ChevronLeft className="mr-1 h-4 w-4" />
-                                Back to Course
+                                Return to Course
                             </span>
                         </Button>
                     </div>
@@ -225,7 +225,7 @@ const QuizPage = () => {
                                 <Card className="text-center">
                                     <CardHeader>
                                         <CardTitle className="text-2xl capitalize">{topic} Quiz</CardTitle>
-                                        <CardDescription>Test your knowledge of {topic} concepts</CardDescription>
+                                        <CardDescription>Assess your knowledge of {topic} concepts</CardDescription>
                                     </CardHeader>
                                     <CardContent className="space-y-4">
                                         <div className="flex justify-center mb-4">
@@ -234,7 +234,7 @@ const QuizPage = () => {
                                         <div className="space-y-2 text-left">
                                             <div className="flex items-center gap-2">
                                                 <Medal className="h-5 w-5 text-muted-foreground" />
-                                                <span>{quizQuestions.length} questions to test your understanding</span>
+                                                <span>{quizQuestions.length} questions to assess your understanding</span>
                                             </div>
                                             <div className="flex items-center gap-2">
                                                 <Clock className="h-5 w-5 text-muted-foreground" />

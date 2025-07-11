@@ -977,10 +977,10 @@ const CoursePage = () => {
           <Download className="h-5 w-5" />
         </Button>
         <ShareOnSocial
-          textToShare={sessionStorage.getItem('mName') + " shared you course on " + mainTopic}
+          textToShare={sessionStorage.getItem('mName') + " shared your course on " + mainTopic}
           link={websiteURL + '/shareable?id=' + courseId}
-          linkTitle={sessionStorage.getItem('mName') + " shared you course on " + mainTopic}
-          linkMetaDesc={sessionStorage.getItem('mName') + " shared you course on " + mainTopic}
+          linkTitle={sessionStorage.getItem('mName') + " shared your course on " + mainTopic}
+          linkMetaDesc={sessionStorage.getItem('mName') + " shared your course on " + mainTopic}
           linkFavicon={appLogo}
           noReferer
         >

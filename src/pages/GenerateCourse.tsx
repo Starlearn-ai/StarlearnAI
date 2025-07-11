@@ -248,9 +248,7 @@ const GenerateCourse = () => {
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold tracking-tight text-gradient bg-gradient-to-r from-primary to-indigo-500 mb-4">Generate Course</h1>
           <p className="text-muted-foreground max-w-lg mx-auto">
-            Type the topic on which you want to Generate course.
-            Also, you can enter a list of subtopics, which are the
-            specifics you want to learn.
+            Enter a topic for your course, and optionally, include a list of specific subtopics to focus on.
           </p>
         </div>
 

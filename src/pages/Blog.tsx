@@ -125,7 +125,7 @@ const Blog = () => {
           <div className="mb-8">
             <Link to="/" className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground">
               <ArrowLeft className="mr-2 h-4 w-4" />
-              Back to Home
+              Go to Homepage
             </Link>
           </div>
 
@@ -133,8 +133,7 @@ const Blog = () => {
           <div className="text-center mb-16">
             <h1 className="text-4xl font-bold mb-6">Our Blog</h1>
             <p className="text-xl text-muted-foreground max-w-3xl mx-auto">
-              Insights, tips, and updates from the {appName} team on education,
-              technology, and the future of learning.
+              Your guide to the future of learning. The {appName} team delivers key insights and practical tips on education and technology.
             </p>
           </div>
 

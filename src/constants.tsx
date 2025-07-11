@@ -1,7 +1,7 @@
 //BRAND
 export const appName = 'StarlearnAI';
 export const companyName = 'STARLEARNAI LTD';
-export const websiteURL = 'http://localhost:4173';
+export const websiteURL = 'http://localhost:8083';
 export const serverURL = 'http://localhost:5000';
 export const appLogo = 'https://firebasestorage.googleapis.com/v0/b/ai-powered-68434.firebasestorage.app/o/favicon.jpg?alt=media&token=173e5b98-9466-4d35-a20d-7ac9704c8431';
 export const razorpayEnabled = false;
@@ -47,8 +47,8 @@ export const stripePlanIdOne = "price_1RgWMdQIkr0hXM2GEkHDRRk1";
 export const stripePlanIdTwo = "price_1RgWNHQIkr0hXM2GopAdq096";
 
 //PAYSTACK
-export const paystackPlanIdOne = "PLN_wcfsvv5hgicz16c";
-export const paystackPlanIdTwo = "PLN_lihhflqwoogfbej";
+export const paystackPlanIdOne = "PLN_xtb5bmdydoq8ft2";
+export const paystackPlanIdTwo = "PLN_11ujqidac5pzqwx";
 export const amountInZarOne = '170';
 export const amountInZarTwo = '1871';
 

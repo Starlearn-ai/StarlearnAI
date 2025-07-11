@@ -1,53 +1,39 @@
-
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-nocheck
 import React, { useEffect } from 'react';
-import Header from '@/components/Header';
+import { motion } from 'framer-motion'; // Import motion
+
+import SEO from '@/components/SEO';
 import Hero from '@/components/Hero';
 import Features from '@/components/Features';
 import HowItWorks from '@/components/HowItWorks';
 import Testimonials from '@/components/Testimonials';
 import Pricing from '@/components/Pricing';
 import CTA from '@/components/CTA';
+import Header from '@/components/Header';
 import Footer from '@/components/Footer';
 
 const Index = () => {
-  // Smooth scroll to anchor links
   useEffect(() => {
-    const handleHashLinkClick = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      const anchor = target.closest('a');
-      
-      if (!anchor) return;
-      
-      const href = anchor.getAttribute('href');
-      if (!href || !href.startsWith('#')) return;
-      
-      const destinationId = href.substring(1);
-      const destinationElement = document.getElementById(destinationId);
-      
-      if (destinationElement) {
-        e.preventDefault();
-        
-        window.scrollTo({
-          top: destinationElement.offsetTop - 80, // Adjust for header height
-          behavior: 'smooth',
-        });
-        
-        // Update URL without scrolling
-        window.history.pushState(null, '', href);
-      }
-    };
-    
-    document.addEventListener('click', handleHashLinkClick);
-    
-    return () => {
-      document.removeEventListener('click', handleHashLinkClick);
-    };
+    // Scroll to top on component mount for a clean animation start
+    window.scrollTo(0, 0);
   }, []);
 
   return (
-    <div className="min-h-screen bg-background overflow-x-hidden">
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.5 }}
+      className="flex flex-col min-h-screen bg-background"
+    >
+      <SEO
+        title="StarlearnAI - Generate Courses with AI"
+        description="StarlearnAI allows you to generate comprehensive courses on any topic using advanced AI, making learning accessible and fun."
+        keywords="AI courses, online learning, education technology, course generation, AI tutor, personalized learning"
+      />
       <Header />
-      <main>
+      <main className="flex-1">
         <Hero />
         <Features />
         <HowItWorks />
@@ -56,7 +42,7 @@ const Index = () => {
         <CTA />
       </main>
       <Footer />
-    </div>
+    </motion.div>
   );
 };
 

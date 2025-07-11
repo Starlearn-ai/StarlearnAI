@@ -38,7 +38,7 @@ const ForgotPassword = () => {
         setSuccess(true);
         toast({
           title: "Reset link sent",
-          description: "If your email exists in our system, you'll receive a reset link shortly.",
+          description: "Check your inbox for a reset link.",
         });
         setIsLoading(false);
       } else {
@@ -66,7 +66,7 @@ const ForgotPassword = () => {
           </Link>
           <h1 className="mt-6 text-3xl font-bold">Forgot password?</h1>
           <p className="mt-2 text-muted-foreground">
-            Enter your email and we'll send you a link to reset your password.
+            Please enter the email address associated with your account to receive a password reset link.
           </p>
         </div>
 
@@ -124,7 +124,7 @@ const ForgotPassword = () => {
               className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground"
             >
               <ArrowLeft className="mr-2 h-4 w-4" />
-              Back to login
+              Return to login
             </Link>
           </CardFooter>
         </Card>

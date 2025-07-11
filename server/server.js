@@ -7,7 +7,7 @@ import cors from 'cors';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
 import gis from 'g-i-s';
-import youtubesearchapi from 'youtube-search-api';
+import youtubesearchapi from 'Youtube-api';
 import { YoutubeTranscript } from 'youtube-transcript';
 import { GoogleGenerativeAI, HarmBlockThreshold, HarmCategory } from '@google/generative-ai';
 import { createApi } from 'unsplash-js';
@@ -15,33 +15,50 @@ import showdown from 'showdown';
 import axios from 'axios';
 import Stripe from 'stripe';
 import Flutterwave from 'flutterwave-node-v3';
+import bcrypt from 'bcrypt'; // Import bcrypt for password hashing
 
-// Load environment variables
+// Load environment variables (ensure this is at the very top)
 dotenv.config();
 
 // Initialize services that need config
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 const flw = new Flutterwave(process.env.FLUTTERWAVE_PUBLIC_KEY, process.env.FLUTTERWAVE_SECRET_KEY);
 
-//INITIALIZE
+//INITIALIZE EXPRESS APP
 const app = express();
-app.use(cors());
-const PORT = process.env.PORT;
-app.use(bodyParser.json({ limit: '50mb' }));
-app.use(express.json({ limit: '50mb' }));
-mongoose.connect(process.env.MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true });
+app.use(cors()); // Enable CORS for all routes
+app.use(bodyParser.json({ limit: '50mb' })); // Parse JSON bodies with a limit
+app.use(express.json({ limit: '50mb' })); // Redundant with bodyParser.json, but harmless. Can be removed if bodyParser is preferred.
+
+const PORT = process.env.PORT || 5000; // Use environment port or default to 5000
+
+// Mongoose Connection
+mongoose.connect(process.env.MONGODB_URI, {
+    serverSelectionTimeoutMS: 5000,
+    socketTimeoutMS: 45000,
+    appName: 'StarlearnAI',
+})
+.then(() => console.log('MongoDB Connected Successfully'))
+.catch(err => console.error('MongoDB Connection Error:', err));
+
+
+// Nodemailer Transporter (Initialized Once Globally)
 const transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
     port: 465,
     service: 'gmail',
-    secure: true,
+    secure: true, // Use SSL
     auth: {
         user: process.env.EMAIL,
         pass: process.env.PASSWORD,
     },
 });
+
+// Google Generative AI & Unsplash Initialization
 const genAI = new GoogleGenerativeAI(process.env.API_KEY);
 const unsplash = createApi({ accessKey: process.env.UNSPLASH_ACCESS_KEY });
+const converter = new showdown.Converter(); // Initialize showdown converter once
+
 
 //SCHEMA
 const adminSchema = new mongoose.Schema({
@@ -55,14 +72,21 @@ const adminSchema = new mongoose.Schema({
     refund: { type: String, default: '' },
     billing: { type: String, default: '' }
 });
+
 const userSchema = new mongoose.Schema({
     email: { type: String, unique: true, required: true },
     mName: String,
-    password: String,
+    password: String, // Password will be hashed
+    phone: String, // Added phone number field
     type: String,
     resetPasswordToken: { type: String, default: null },
     resetPasswordExpires: { type: Date, default: null },
+    // NEW: Trial fields
+    trialActive: { type: Boolean, default: false },
+    trialStartDate: { type: Date, default: null },
+    trialEndDate: { type: Date, default: null },
 });
+//
 const courseSchema = new mongoose.Schema({
     user: String,
     content: { type: String, required: true },
@@ -73,6 +97,7 @@ const courseSchema = new mongoose.Schema({
     end: { type: Date, default: Date.now },
     completed: { type: Boolean, default: false }
 });
+
 const subscriptionSchema = new mongoose.Schema({
     user: String,
     subscription: String,
@@ -82,6 +107,7 @@ const subscriptionSchema = new mongoose.Schema({
     date: { type: Date, default: Date.now },
     active: { type: Boolean, default: true }
 });
+
 const contactShema = new mongoose.Schema({
     fname: String,
     lname: String,
@@ -90,20 +116,24 @@ const contactShema = new mongoose.Schema({
     msg: String,
     date: { type: Date, default: Date.now },
 });
+
 const notesSchema = new mongoose.Schema({
     course: String,
     notes: String,
 });
+
 const examSchema = new mongoose.Schema({
     course: String,
     exam: String,
     marks: String,
     passed: { type: Boolean, default: false },
 });
+
 const langSchema = new mongoose.Schema({
     course: String,
     lang: String,
 });
+
 const blogSchema = new mongoose.Schema({
     title: { type: String, unique: true, required: true },
     excerpt: String,
@@ -130,99 +160,141 @@ const ExamSchema = mongoose.model('Exams', examSchema);
 const LangSchema = mongoose.model('Lang', langSchema);
 const BlogSchema = mongoose.model('Blog', blogSchema);
 
-//REQUEST
 
-//SIGNUP
+// REQUEST HANDLERS
+
+// Middleware to check and update trial status on login (added for reusability)
+const checkTrialStatus = async (user) => {
+    if (user.trialActive && user.trialEndDate && new Date() > new Date(user.trialEndDate)) {
+        console.log(`Trial expired for user: ${user.email}`);
+        user.trialActive = false;
+        // Only set type to 'free' if they don't have an active paid subscription
+        const activeSubscription = await Subscription.findOne({ user: user._id, active: true });
+        if (!activeSubscription || activeSubscription.plan === 'free') {
+             user.type = 'free';
+        }
+        await user.save();
+        return user; // Return updated user object
+    }
+    return user; // Return original user if trial is not active or not expired
+};
+
+
+// SIGNUP
 app.post('/api/signup', async (req, res) => {
-    const { email, mName, password, type } = req.body;
+    const { email, mName, password, type, phone } = req.body;
 
     try {
+        const existingUser = await User.findOne({ email });
+        if (existingUser) {
+            return res.json({ success: false, message: 'User with this email already exists' });
+        }
+
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const trialStartDate = new Date();
+        const trialEndDate = new Date(trialStartDate.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days from now
+
+        const newUser = new User({
+            email,
+            mName,
+            password: hashedPassword,
+            type: 'free', // Default to free, premium features enabled by trial status
+            phone,
+            trialActive: true, // NEW: Start trial
+            trialStartDate,   // NEW: Set trial start date
+            trialEndDate,     // NEW: Set trial end date
+        });
+        await newUser.save();
+
         const estimate = await User.estimatedDocumentCount();
-        if (estimate > 0) {
-            const existingUser = await User.findOne({ email });
-            if (existingUser) {
-                return res.json({ success: false, message: 'User with this email already exists' });
-            }
-            const newUser = new User({ email, mName, password, type });
-            await newUser.save();
-            res.json({ success: true, message: 'Account created successfully', userId: newUser._id });
-        } else {
-            const newUser = new User({ email, mName, password, type: 'forever' });
-            await newUser.save();
+        if (estimate === 1) { // If this is the very first user, make them admin
             const newAdmin = new Admin({ email, mName, type: 'main' });
             await newAdmin.save();
-            res.json({ success: true, message: 'Account created successfully', userId: newUser._id });
         }
+
+        // Return user data including trial status
+        res.json({ success: true, message: 'Account created successfully', userData: newUser });
     } catch (error) {
-        console.log('Error', error);
+        console.error('Signup Error:', error);
         res.status(500).json({ success: false, message: 'Internal server error' });
     }
 });
 
-//SIGNIN
+// SIGNIN
 app.post('/api/signin', async (req, res) => {
     const { email, password } = req.body;
 
     try {
-        const user = await User.findOne({ email });
+        let user = await User.findOne({ email }); // Use 'let' to allow reassigning user
 
         if (!user) {
             return res.json({ success: false, message: 'Invalid email or password' });
         }
 
-        if (password === user.password) {
+        const isPasswordValid = await bcrypt.compare(password, user.password);
+
+        if (isPasswordValid) {
+            user = await checkTrialStatus(user); // NEW: Check and update trial status on login
             return res.json({ success: true, message: 'SignIn Successful', userData: user });
         }
 
         res.json({ success: false, message: 'Invalid email or password' });
 
     } catch (error) {
-        console.log('Error', error);
-        res.status(500).json({ success: false, message: 'Invalid email or password' });
+        console.error('Signin Error:', error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
-
 });
 
-//SIGNINSOCIAL
+// SIGNIN SOCIAL
 app.post('/api/social', async (req, res) => {
     const { email, name } = req.body;
     let mName = name;
-    let password = '';
+    let password = ''; // Social logins don't have a traditional password
     let type = 'free';
+
     try {
-        const user = await User.findOne({ email });
+        let user = await User.findOne({ email });
 
         if (!user) {
+            // If user doesn't exist, create a new one with trial
+            const trialStartDate = new Date();
+            const trialEndDate = new Date(trialStartDate.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days from now
+
+            const newUser = new User({
+                email,
+                mName,
+                password, // Empty password for social login
+                type,
+                phone: '', // No phone from social login
+                trialActive: true, // NEW: Start trial
+                trialStartDate,   // NEW: Set trial start date
+                trialEndDate,     // NEW: Set trial end date
+            });
+            await newUser.save();
+
             const estimate = await User.estimatedDocumentCount();
-            if (estimate > 0) {
-                const newUser = new User({ email, mName, password, type });
-                await newUser.save();
-                res.json({ success: true, message: 'Account created successfully', userData: newUser });
-            } else {
-                const newUser = new User({ email, mName, password, type });
-                await newUser.save();
+            if (estimate === 1) { // If this is the very first user, make them admin
                 const newAdmin = new Admin({ email, mName, type: 'main' });
                 await newAdmin.save();
-                res.json({ success: true, message: 'Account created successfully', userData: newUser });
             }
-        } else {
-            return res.json({ success: true, message: 'SignIn Successful', userData: user });
+            user = newUser; // Set user to the newly created user for response
         }
 
+        user = await checkTrialStatus(user); // NEW: Check and update trial status on social login
+        return res.json({ success: true, message: 'SignIn Successful', userData: user });
     } catch (error) {
-        console.log('Error', error);
-        res.status(500).json({ success: false, message: 'Internal Server Error' });
+        console.error('Social Signin/Signup Error:', error);
+        res.status(500).json({ success: false, message: 'Internal server error' });
     }
-
 });
 
-//SEND MAIL
+// SEND MAIL (General purpose email sender)
 app.post('/api/data', async (req, res) => {
     const receivedData = req.body;
 
     try {
         const emailHtml = receivedData.html;
-
         const options = {
             from: process.env.EMAIL,
             to: receivedData.to,
@@ -230,15 +302,15 @@ app.post('/api/data', async (req, res) => {
             html: emailHtml,
         };
 
-        const data = await transporter.sendMail(options);
-        res.status(200).json(data);
+        const info = await transporter.sendMail(options);
+        res.status(200).json(info);
     } catch (error) {
-        console.log('Error', error);
-        res.status(400).json(error);
+        console.error('Send Mail Error:', error);
+        res.status(400).json({ success: false, message: 'Failed to send email' });
     }
 });
 
-//FOROGT PASSWORD
+// FORGOT PASSWORD
 app.post('/api/forgot', async (req, res) => {
     const { email, name, company, logo } = req.body;
 
@@ -251,7 +323,7 @@ app.post('/api/forgot', async (req, res) => {
 
         const token = crypto.randomBytes(20).toString('hex');
         user.resetPasswordToken = token;
-        user.resetPasswordExpires = Date.now() + 3600000;
+        user.resetPasswordExpires = Date.now() + 3600000; // 1 hour expiration
         await user.save();
 
         const resetLink = `${process.env.WEBSITE_URL}/reset-password/${token}`;
@@ -275,7 +347,7 @@ app.post('/api/forgot', async (req, res) => {
                       <table align="center" border="0" cellPadding="0" cellSpacing="0" role="presentation" width="100%" style="margin-top:32px">
                         <tbody>
                           <tr>
-                            <td><img alt="Vercel" src="${logo}" width="40" height="37" style="display:block;outline:none;border:none;text-decoration:none;margin-left:auto;margin-right:auto;margin-top:0px;margin-bottom:0px" /></td>
+                            <td><img alt="Vercel" src="${process.env.LOGO}" width="40" height="37" style="display:block;outline:none;border:none;text-decoration:none;margin-left:auto;margin-right:auto;margin-top:0px;margin-bottom:0px" /></td>
                           </tr>
                         </tbody>
                       </table>
@@ -1079,417 +1151,6 @@ async function sendCancelEmail(email, name, subject) {
 
 }
 
-//CANCEL PAYPAL SUBSCRIPTION
-app.post('/api/paypalcancel', async (req, res) => {
-    const { id, email } = req.body;
-
-    const PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID;
-    const PAYPAL_APP_SECRET_KEY = process.env.PAYPAL_APP_SECRET_KEY;
-    const auth = Buffer.from(PAYPAL_CLIENT_ID + ":" + PAYPAL_APP_SECRET_KEY).toString("base64");
-    await fetch(`https://api-m.paypal.com/v1/billing/subscriptions/${id}/cancel`, {
-        method: 'POST',
-        headers: {
-            'Authorization': 'Basic ' + auth,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-        },
-        body: JSON.stringify({ "reason": "Not satisfied with the service" })
-
-    }).then(async resp => {
-        try {
-            const subscriptionDetails = await Subscription.findOne({ subscriberId: email });
-            const userId = subscriptionDetails.user;
-
-            await User.findOneAndUpdate(
-                { _id: userId },
-                { $set: { type: 'free' } }
-            );
-
-            const userDetails = await User.findOne({ _id: userId });
-            await Subscription.findOneAndDelete({ subscription: id });
-
-            const transporter = nodemailer.createTransport({
-                host: 'smtp.gmail.com',
-                port: 465,
-                service: 'gmail',
-                secure: true,
-                auth: {
-                    user: process.env.EMAIL,
-                    pass: process.env.PASSWORD,
-                },
-            });
-
-            const Reactivate = process.env.WEBSITE_URL + "/pricing";
-
-            const mailOptions = {
-                from: process.env.EMAIL,
-                to: userDetails.email,
-                subject: `${userDetails.mName} Your Subscription Plan Has Been Cancelled`,
-                html: `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
-                <meta http-equiv="Content-Type" content="text/html charset=UTF-8" />
-                <html lang="en">
-                
-                  <head></head>
-                 <div id="__react-email-preview" style="display:none;overflow:hidden;line-height:1px;opacity:0;max-height:0;max-width:0">Subscription Cancelled<div> ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿</div>
-                 </div>
-                
-<body style="padding:20px; margin-left:auto;margin-right:auto;margin-top:auto;margin-bottom:auto;background-color:#f6f9fc;font-family:ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, Roboto, &quot;Helvetica Neue&quot;, Arial, &quot;Noto Sans&quot;, sans-serif, &quot;Apple Color Emoji&quot;, &quot;Segoe UI Emoji&quot;, &quot;Segoe UI Symbol&quot;, &quot;Noto Color Emoji&quot;">
-                    <table align="center" role="presentation" cellSpacing="0" cellPadding="0" border="0" height="80%" width="100%" style="max-width:37.5em;max-height:80%; margin-left:auto;margin-right:auto;margin-top:80px;margin-bottom:80px;width:465px;border-radius:0.25rem;border-width:1px;background-color:#fff;padding:20px">
-                      <tr style="width:100%">
-                        <td>
-                          <table align="center" border="0" cellPadding="0" cellSpacing="0" role="presentation" width="100%" style="margin-top:32px">
-                            <tbody>
-                              <tr>
-                                <td><img alt="Vercel" src="${process.env.LOGO}" width="40" height="37" style="display:block;outline:none;border:none;text-decoration:none;margin-left:auto;margin-right:auto;margin-top:0px;margin-bottom:0px" /></td>
-                              </tr>
-                            </tbody>
-                          </table>
-                          <h1 style="margin-left:0px;margin-right:0px;margin-top:30px;margin-bottom:30px;padding:0px;text-align:center;font-size:24px;font-weight:400;color:rgb(0,0,0)">Subscription Cancelled</h1>
-                          <p style="font-size:14px;line-height:24px;margin:16px 0;color:rgb(0,0,0)">${userDetails.mName}, your subscription plan has been Cancelled. Reactivate your plan by clicking on the button below.</p>
-                          <table align="center" border="0" cellPadding="0" cellSpacing="0" role="presentation" width="100%" style="margin-bottom:32px;margin-top:32px;text-align:center">
-                               <tbody>
-                                  <tr>
-                                    <td><a href="${Reactivate}" target="_blank" style="p-x:20px;p-y:12px;line-height:100%;text-decoration:none;display:inline-block;max-width:100%;padding:12px 20px;border-radius:0.25rem;background-color: #007BFF;text-align:center;font-size:12px;font-weight:600;color:rgb(255,255,255);text-decoration-line:none"><span></span><span style="p-x:20px;p-y:12px;max-width:100%;display:inline-block;line-height:120%;text-decoration:none;text-transform:none;mso-padding-alt:0px;mso-text-raise:9px"</span><span>Reactivate</span></a></td>
-                                  </tr>
-                                </tbody>
-                          </table>
-                          <p style="font-size:14px;line-height:24px;margin:16px 0;color:rgb(0,0,0)">Best,<p target="_blank" style="color:rgb(0,0,0);text-decoration:none;text-decoration-line:none">The <strong>${process.env.COMPANY}</strong> Team</p></p>
-                          </td>
-                      </tr>
-                    </table>
-                  </body>
-                
-                </html>`,
-            };
-
-            await transporter.sendMail(mailOptions);
-            res.json({ success: true, message: '' });
-
-        } catch (error) {
-            console.log('Error', error);
-        }
-    });
-
-});
-
-//UPDATE SUBSCRIPTION
-app.post('/api/paypalupdate', async (req, res) => {
-    const { id, idPlan } = req.body;
-
-    const PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID;
-    const PAYPAL_APP_SECRET_KEY = process.env.PAYPAL_APP_SECRET_KEY;
-    const auth = Buffer.from(PAYPAL_CLIENT_ID + ":" + PAYPAL_APP_SECRET_KEY).toString("base64");
-
-    try {
-        const response = await fetch(`https://api-m.paypal.com/v1/billing/subscriptions/${id}/revise`, {
-            method: 'POST',
-            headers: {
-                'Authorization': 'Basic ' + auth,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ "plan_id": idPlan, "application_context": { "brand_name": process.env.COMPANY, "locale": "en-US", "payment_method": { "payer_selected": "PAYPAL", "payee_preferred": "IMMEDIATE_PAYMENT_REQUIRED" }, "return_url": `${process.env.WEBSITE_URL}/payment-success/${idPlan}`, "cancel_url": `${process.env.WEBSITE_URL}/payment-failed` } })
-        });
-        const session = await response.json();
-        res.send(session)
-    } catch (error) {
-        console.log('Error', error);
-    }
-
-});
-
-//UPDATE SUBSCRIPTION AND USER DETAILS
-app.post('/api/paypalupdateuser', async (req, res) => {
-    const { id, mName, email, user, plan } = req.body;
-
-    await Subscription.findOneAndUpdate(
-        { subscription: id },
-        { $set: { plan: plan } }
-    ).then(async r => {
-        await User.findOneAndUpdate(
-            { _id: user },
-            { $set: { type: plan } }
-        ).then(async ress => {
-            const transporter = nodemailer.createTransport({
-                host: 'smtp.gmail.com',
-                port: 465,
-                service: 'gmail',
-                secure: true,
-                auth: {
-                    user: process.env.EMAIL,
-                    pass: process.env.PASSWORD,
-                },
-            });
-
-            const mailOptions = {
-                from: process.env.EMAIL,
-                to: email,
-                subject: `${mName} Your Subscription Plan Has Been Modifed`,
-                html: `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
-                <meta http-equiv="Content-Type" content="text/html charset=UTF-8" />
-                <html lang="en">
-    
-                  <head></head>
-                 <div id="__react-email-preview" style="display:none;overflow:hidden;line-height:1px;opacity:0;max-height:0;max-width:0">Subscription Modifed<div> ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿</div>
-                 </div>
-    
-    <body style="padding:20px; margin-left:auto;margin-right:auto;margin-top:auto;margin-bottom:auto;background-color:#f6f9fc;font-family:ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, Roboto, &quot;Helvetica Neue&quot;, Arial, &quot;Noto Sans&quot;, sans-serif, &quot;Apple Color Emoji&quot;, &quot;Segoe UI Emoji&quot;, &quot;Segoe UI Symbol&quot;, &quot;Noto Color Emoji&quot;">
-                    <table align="center" role="presentation" cellSpacing="0" cellPadding="0" border="0" height="80%" width="100%" style="max-width:37.5em;max-height:80%; margin-left:auto;margin-right:auto;margin-top:80px;margin-bottom:80px;width:465px;border-radius:0.25rem;border-width:1px;background-color:#fff;padding:20px">
-                      <tr style="width:100%">
-                        <td>
-                          <table align="center" border="0" cellPadding="0" cellSpacing="0" role="presentation" width="100%" style="margin-top:32px">
-                            <tbody>
-                              <tr>
-                                <td><img alt="Vercel" src="${process.env.LOGO}" width="40" height="37" style="display:block;outline:none;border:none;text-decoration:none;margin-left:auto;margin-right:auto;margin-top:0px;margin-bottom:0px" /></td>
-                              </tr>
-                            </tbody>
-                          </table>
-                          <h1 style="margin-left:0px;margin-right:0px;margin-top:30px;margin-bottom:30px;padding:0px;text-align:center;font-size:24px;font-weight:400;color:rgb(0,0,0)">Subscription Modifed</h1>
-                          <p style="font-size:14px;line-height:24px;margin:16px 0;color:rgb(0,0,0)">${mName}, your subscription plan has been Modifed.</p>
-                          <table align="center" border="0" cellPadding="0" cellSpacing="0" role="presentation" width="100%" style="margin-bottom:32px;margin-top:32px;text-align:center">
-                          </table>
-                          <p style="font-size:14px;line-height:24px;margin:16px 0;color:rgb(0,0,0)">Best,<p target="_blank" style="color:rgb(0,0,0);text-decoration:none;text-decoration-line:none">The <strong>${process.env.COMPANY}</strong> Team</p></p>
-                          </td>
-                      </tr>
-                    </table>
-                  </body>
-    
-                </html>`,
-            };
-
-            await transporter.sendMail(mailOptions);
-        })
-    });
-
-});
-
-//CREATE RAZORPAY SUBSCRIPTION
-app.post('/api/razorpaycreate', async (req, res) => {
-    const { plan, email, fullAddress } = req.body;
-    try {
-        const YOUR_KEY_ID = process.env.RAZORPAY_KEY_ID;
-        const YOUR_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET;
-
-        const requestBody = {
-            plan_id: plan,
-            total_count: 12,
-            quantity: 1,
-            customer_notify: 1,
-            notes: {
-                notes_key_1: fullAddress,
-            },
-            notify_info: {
-                notify_email: email
-            }
-        };
-
-        const config = {
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            auth: {
-                username: YOUR_KEY_ID,
-                password: YOUR_KEY_SECRET
-            }
-        };
-
-        const requestData = JSON.stringify(requestBody);
-
-        axios.post('https://api.razorpay.com/v1/subscriptions', requestData, config)
-            .then(response => {
-                res.send(response.data);
-            })
-            .catch(error => {
-                console.log('Error', error);
-            });
-
-    } catch (error) {
-        console.log('Error', error);
-    }
-
-});
-
-//GET RAZORPAY SUBSCRIPTION DETAILS
-app.post('/api/razorapydetails', async (req, res) => {
-
-    const { subscriberId, uid, plan } = req.body;
-
-    let cost = 0;
-    if (plan === process.env.MONTH_TYPE) {
-        cost = process.env.MONTH_COST
-    } else {
-        cost = process.env.YEAR_COST
-    }
-    cost = cost / 4;
-
-    await Admin.findOneAndUpdate(
-        { type: 'main' },
-        { $inc: { total: cost } }
-    );
-
-    await User.findOneAndUpdate(
-        { _id: uid },
-        { $set: { type: plan } }
-    ).then(async result => {
-
-        const YOUR_KEY_ID = process.env.RAZORPAY_KEY_ID;
-        const YOUR_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET;
-        const SUBSCRIPTION_ID = subscriberId;
-
-        const config = {
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            auth: {
-                username: YOUR_KEY_ID,
-                password: YOUR_KEY_SECRET
-            }
-        };
-
-        axios.get(`https://api.razorpay.com/v1/subscriptions/${SUBSCRIPTION_ID}`, config)
-            .then(response => {
-                res.send(response.data);
-            })
-            .catch(error => {
-                //DO NOTHING
-            });
-
-    }).catch(error => {
-        res.status(500).json({ success: false, message: 'Internal server error' });
-    })
-
-});
-
-//RAZORPAY PENDING
-app.post('/api/razorapypending', async (req, res) => {
-
-    const { sub } = req.body;
-
-    const YOUR_KEY_ID = process.env.RAZORPAY_KEY_ID;
-    const YOUR_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET;
-    const SUBSCRIPTION_ID = sub;
-
-    const config = {
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        auth: {
-            username: YOUR_KEY_ID,
-            password: YOUR_KEY_SECRET
-        }
-    };
-
-    axios.get(`https://api.razorpay.com/v1/subscriptions/${SUBSCRIPTION_ID}`, config)
-        .then(response => {
-            res.send(response.data);
-        })
-        .catch(error => {
-            console.log('Error', error);
-        });
-
-});
-
-//RAZORPAY CANCEL SUBSCRIPTION 
-app.post('/api/razorpaycancel', async (req, res) => {
-    const { id, email } = req.body;
-
-    const YOUR_KEY_ID = process.env.RAZORPAY_KEY_ID;
-    const YOUR_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET;
-    const SUBSCRIPTION_ID = id;
-
-    const requestBody = {
-        cancel_at_cycle_end: 0
-    };
-
-    const config = {
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        auth: {
-            username: YOUR_KEY_ID,
-            password: YOUR_KEY_SECRET
-        }
-    };
-
-    axios.post(`https://api.razorpay.com/v1/subscriptions/${SUBSCRIPTION_ID}/cancel`, requestBody, config)
-        .then(async resp => {
-            try {
-                const subscriptionDetails = await Subscription.findOne({ subscriberId: email });
-                const userId = subscriptionDetails.user;
-
-                await User.findOneAndUpdate(
-                    { _id: userId },
-                    { $set: { type: 'free' } }
-                );
-
-                const userDetails = await User.findOne({ _id: userId });
-                await Subscription.findOneAndDelete({ subscription: id });
-
-                const transporter = nodemailer.createTransport({
-                    host: 'smtp.gmail.com',
-                    port: 465,
-                    service: 'gmail',
-                    secure: true,
-                    auth: {
-                        user: process.env.EMAIL,
-                        pass: process.env.PASSWORD,
-                    },
-                });
-
-                const Reactivate = process.env.WEBSITE_URL + "/pricing";
-
-                const mailOptions = {
-                    from: process.env.EMAIL,
-                    to: userDetails.email,
-                    subject: `${userDetails.mName} Your Subscription Plan Has Been Cancelled`,
-                    html: `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
-                    <meta http-equiv="Content-Type" content="text/html charset=UTF-8" />
-                    <html lang="en">
-                    
-                      <head></head>
-                     <div id="__react-email-preview" style="display:none;overflow:hidden;line-height:1px;opacity:0;max-height:0;max-width:0">Subscription Cancelled<div> ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿</div>
-                     </div>
-                    
-<body style="padding:20px; margin-left:auto;margin-right:auto;margin-top:auto;margin-bottom:auto;background-color:#f6f9fc;font-family:ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, Roboto, &quot;Helvetica Neue&quot;, Arial, &quot;Noto Sans&quot;, sans-serif, &quot;Apple Color Emoji&quot;, &quot;Segoe UI Emoji&quot;, &quot;Segoe UI Symbol&quot;, &quot;Noto Color Emoji&quot;">
-                    <table align="center" role="presentation" cellSpacing="0" cellPadding="0" border="0" height="80%" width="100%" style="max-width:37.5em;max-height:80%; margin-left:auto;margin-right:auto;margin-top:80px;margin-bottom:80px;width:465px;border-radius:0.25rem;border-width:1px;background-color:#fff;padding:20px">
-                          <tr style="width:100%">
-                            <td>
-                              <table align="center" border="0" cellPadding="0" cellSpacing="0" role="presentation" width="100%" style="margin-top:32px">
-                                <tbody>
-                                  <tr>
-                                    <td><img alt="Vercel" src="${process.env.LOGO}" width="40" height="37" style="display:block;outline:none;border:none;text-decoration:none;margin-left:auto;margin-right:auto;margin-top:0px;margin-bottom:0px" /></td>
-                                  </tr>
-                                </tbody>
-                              </table>
-                              <h1 style="margin-left:0px;margin-right:0px;margin-top:30px;margin-bottom:30px;padding:0px;text-align:center;font-size:24px;font-weight:400;color:rgb(0,0,0)">Subscription Cancelled</h1>
-                              <p style="font-size:14px;line-height:24px;margin:16px 0;color:rgb(0,0,0)">${userDetails.mName}, your subscription plan has been Cancelled. Reactivate your plan by clicking on the button below.</p>
-                              <table align="center" border="0" cellPadding="0" cellSpacing="0" role="presentation" width="100%" style="margin-bottom:32px;margin-top:32px;text-align:center">
-                                   <tbody>
-                                      <tr>
-                                        <td><a href="${Reactivate}" target="_blank" style="p-x:20px;p-y:12px;line-height:100%;text-decoration:none;display:inline-block;max-width:100%;padding:12px 20px;border-radius:0.25rem;background-color: #007BFF;text-align:center;font-size:12px;font-weight:600;color:rgb(255,255,255);text-decoration-line:none"><span></span><span style="p-x:20px;p-y:12px;max-width:100%;display:inline-block;line-height:120%;text-decoration:none;text-transform:none;mso-padding-alt:0px;mso-text-raise:9px"</span><span>Reactivate</span></a></td>
-                                      </tr>
-                                    </tbody>
-                              </table>
-                              <p style="font-size:14px;line-height:24px;margin:16px 0;color:rgb(0,0,0)">Best,<p target="_blank" style="color:rgb(0,0,0);text-decoration:none;text-decoration-line:none">The <strong>${process.env.COMPANY}</strong> Team</p></p>
-                              </td>
-                          </tr>
-                        </table>
-                      </body>
-                    
-                    </html>`,
-                };
-
-                await transporter.sendMail(mailOptions);
-                res.json({ success: true, message: '' });
-
-            } catch (error) {
-                console.log('Error', error);
-            }
-        })
-        .catch(error => {
-            console.log('Error', error);
-        });
-});
-
 //CONTACT
 app.post('/api/contact', async (req, res) => {
     const { fname, lname, email, phone, msg } = req.body;
@@ -1584,7 +1245,7 @@ app.post('/api/addadmin', async (req, res) => {
         const newAdmin = new Admin({ email: user.email, mName: user.mName, type: 'no' });
         await newAdmin.save();
         res.json({ success: true, message: 'Admin added successfully' });
-    } catch (error) {
+    }  catch (error) {
         console.log('Error', error);
     }
 });
@@ -1711,11 +1372,6 @@ app.post('/api/stripedetails', async (req, res) => {
     await Admin.findOneAndUpdate(
         { type: 'main' },
         { $inc: { total: cost } }
-    );
-
-    await User.findOneAndUpdate(
-        { _id: uid },
-        { $set: { type: plan } }
     ).then(async result => {
         const session = await stripe.checkout.sessions.retrieve(subscriberId);
         res.send(session);
@@ -1805,199 +1461,6 @@ app.post('/api/stripecancel', async (req, res) => {
     } catch (error) {
         console.log('Error', error);
     }
-
-});
-
-//PAYSTACK PAYMENT
-app.post('/api/paystackpayment', async (req, res) => {
-    const { planId, amountInZar, email } = req.body;
-    try {
-
-        const data = {
-            email: email,
-            amount: amountInZar,
-            plan: planId
-        };
-
-        axios.post('https://api.paystack.co/transaction/initialize', data, {
-            headers: {
-                'Authorization': `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-                'Content-Type': 'application/json'
-            }
-        })
-            .then(response => {
-                if (response.data.status) {
-                    const authorizationUrl = response.data.data.authorization_url;
-                    res.json({ url: authorizationUrl });
-                } else {
-                    res.status(500).json({ error: 'Internal Server Error' })
-                }
-            })
-            .catch(error => {
-                res.status(500).json({ error: 'Internal Server Error' })
-            });
-    } catch (e) {
-        console.log('Error', e);
-        res.status(500).json({ error: e.message })
-    }
-
-});
-
-//PAYSTACK GET DETAIL
-app.post('/api/paystackfetch', async (req, res) => {
-    const { email, uid, plan } = req.body;
-    try {
-
-        const searchEmail = email;
-        const url = "https://api.paystack.co/subscription";
-        const authorization = `Bearer ${process.env.PAYSTACK_SECRET_KEY}`;
-
-        axios.get(url, {
-            headers: {
-                'Authorization': authorization
-            }
-        })
-            .then(async response => {
-                const jsonData = response.data;
-                let subscriptionDetails = null;
-                jsonData.data.forEach(subscription => {
-                    if (subscription.customer.email === searchEmail) {
-                        subscriptionDetails = {
-                            subscription_code: subscription.subscription_code,
-                            createdAt: subscription.createdAt,
-                            updatedAt: subscription.updatedAt,
-                            customer_code: subscription.customer.customer_code
-                        };
-                    }
-                });
-
-                if (subscriptionDetails) {
-
-                    let cost = 0;
-                    if (plan === process.env.MONTH_TYPE) {
-                        cost = process.env.MONTH_COST
-                    } else {
-                        cost = process.env.YEAR_COST
-                    }
-                    cost = cost / 4;
-
-                    await Admin.findOneAndUpdate(
-                        { type: 'main' },
-                        { $inc: { total: cost } }
-                    );
-
-                    await User.findOneAndUpdate(
-                        { _id: uid },
-                        { $set: { type: plan } }
-                    ).then(async result => {
-                        res.json({ details: subscriptionDetails });
-                    }).catch(error => {
-                        console.log('Error', error);
-                        res.status(500).json({ success: false, message: 'Internal server error' });
-                    })
-
-                } else {
-                    res.status(500).json({ error: 'Internal Server Error' })
-                }
-            })
-            .catch(error => {
-                console.log('Error', error);
-                res.status(500).json({ error: 'Internal Server Error' })
-            });
-
-
-    } catch (e) {
-        console.log('Error', e);
-        res.status(500).json({ error: 'Internal Server Error' })
-    }
-
-});
-
-//PAYSTACK PAYMENT
-app.post('/api/paystackcancel', async (req, res) => {
-    const { code, token, email } = req.body;
-
-    const url = "https://api.paystack.co/subscription/disable";
-    const authorization = `Bearer ${process.env.PAYSTACK_SECRET_KEY}`;
-    const contentType = "application/json";
-    const data = {
-        code: code,
-        token: token
-    };
-
-    axios.post(url, data, {
-        headers: {
-            Authorization: authorization,
-            'Content-Type': contentType
-        }
-    }).then(async response => {
-        const subscriptionDetails = await Subscription.findOne({ subscriberId: email });
-        const userId = subscriptionDetails.user;
-
-        await User.findOneAndUpdate(
-            { _id: userId },
-            { $set: { type: 'free' } }
-        );
-
-        const userDetails = await User.findOne({ _id: userId });
-        await Subscription.findOneAndDelete({ subscriberId: code });
-
-        const transporter = nodemailer.createTransport({
-            host: 'smtp.gmail.com',
-            port: 465,
-            service: 'gmail',
-            secure: true,
-            auth: {
-                user: process.env.EMAIL,
-                pass: process.env.PASSWORD,
-            },
-        });
-
-        const Reactivate = process.env.WEBSITE_URL + "/pricing";
-
-        const mailOptions = {
-            from: process.env.EMAIL,
-            to: email,
-            subject: `${userDetails.mName} Your Subscription Plan Has Been Cancelled`,
-            html: `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
-                <meta http-equiv="Content-Type" content="text/html charset=UTF-8" />
-                <html lang="en">
-                
-                  <head></head>
-                 <div id="__react-email-preview" style="display:none;overflow:hidden;line-height:1px;opacity:0;max-height:0;max-width:0">Subscription Cancelled<div> ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿ ‌​‍‎‏﻿</div>
-                 </div>
-                
-                  <body style="padding:20px; margin-left:auto;margin-right:auto;margin-top:auto;margin-bottom:auto;background-color:#f6f9fc;font-family:ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, Roboto, &quot;Helvetica Neue&quot;, Arial, &quot;Noto Sans&quot;, sans-serif, &quot;Apple Color Emoji&quot;, &quot;Segoe UI Emoji&quot;, &quot;Segoe UI Symbol&quot;, &quot;Noto Color Emoji&quot;">
-                    <table align="center" role="presentation" cellSpacing="0" cellPadding="0" border="0" height="80%" width="100%" style="max-width:37.5em;max-height:80%; margin-left:auto;margin-right:auto;margin-top:80px;margin-bottom:80px;width:465px;border-radius:0.25rem;border-width:1px;background-color:#fff;padding:20px">
-                      <tr style="width:100%">
-                        <td>
-                          <table align="center" border="0" cellPadding="0" cellSpacing="0" role="presentation" width="100%" style="margin-top:32px">
-                            <tbody>
-                              <tr>
-                                <td><img alt="Vercel" src="${process.env.LOGO}" width="40" height="37" style="display:block;outline:none;border:none;text-decoration:none;margin-left:auto;margin-right:auto;margin-top:0px;margin-bottom:0px" /></td>
-                              </tr>
-                            </tbody>
-                          </table>
-                          <h1 style="margin-left:0px;margin-right:0px;margin-top:30px;margin-bottom:30px;padding:0px;text-align:center;font-size:24px;font-weight:400;color:rgb(0,0,0)">Subscription Cancelled</h1>
-                          <p style="font-size:14px;line-height:24px;margin:16px 0;color:rgb(0,0,0)">${userDetails.mName}, your subscription plan has been Cancelled. Reactivate your plan by clicking on the button below.</p>
-                          <table align="center" border="0" cellPadding="0" cellSpacing="0" role="presentation" width="100%" style="margin-bottom:32px;margin-top:32px;text-align:center">
-                               <tbody>
-                                  <tr>
-                                    <td><a href="${Reactivate}" target="_blank" style="p-x:20px;p-y:12px;line-height:100%;text-decoration:none;display:inline-block;max-width:100%;padding:12px 20px;border-radius:0.25rem;background-color: #007BFF;text-align:center;font-size:12px;font-weight:600;color:rgb(255,255,255);text-decoration-line:none"><span></span><span style="p-x:20px;p-y:12px;max-width:100%;display:inline-block;line-height:120%;text-decoration:none;text-transform:none;mso-padding-alt:0px;mso-text-raise:9px"</span><span>Reactivate</span></a></td>
-                                  </tr>
-                                </tbody>
-                          </table>
-                          <p style="font-size:14px;line-height:24px;margin:16px 0;color:rgb(0,0,0)">Best,<p target="_blank" style="color:rgb(0,0,0);text-decoration:none;text-decoration-line:none">The <strong>${process.env.COMPANY}</strong> Team</p></p>
-                          </td>
-                      </tr>
-                    </table>
-                  </body>
-                </html>`,
-        };
-
-        await transporter.sendMail(mailOptions);
-        res.json({ success: true, message: '' });
-    })
 
 });
 

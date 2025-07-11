@@ -26,7 +26,7 @@ const plans: PricingPlan[] = [
       "Generate 5 Sub-Topics",
       "Lifetime access",
       "Theory & Image Course",
-      "Ai Teacher Chat",
+      "Your AI Tutor",
     ],
     isPopular: false,
     billingPeriod: "forever"
@@ -40,7 +40,7 @@ const plans: PricingPlan[] = [
       "Generate 10 Sub-Topics",
       "1 Month Access",
       "Theory & Image Course",
-      "Ai Teacher Chat",
+      "Your AI Tutor",
       "Course In 23+ Languages",
       "Create Unlimited Course",
       "Video & Theory Course",
@@ -57,7 +57,7 @@ const plans: PricingPlan[] = [
       "Generate 10 Sub-Topics",
       "1 Year Access",
       "Theory & Image Course",
-      "Ai Teacher Chat",
+      "Your AI Tutor",
       "Course In 23+ Languages",
       "Create Unlimited Course",
       "Video & Theory Course",
@@ -84,7 +84,7 @@ const ProfilePricing = () => {
       <div className="text-center mb-10">
         <h1 className="text-3xl font-bold tracking-tight">Choose Your Plan</h1>
         <p className="mt-3 text-muted-foreground">
-          Select the perfect plan to boost your course creation productivity
+          The right plan for your goals and budget.
         </p>
       </div>
 

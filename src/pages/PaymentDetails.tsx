@@ -69,8 +69,8 @@ const plansFeartures = [
     features: [
       "Generate 5 Sub-Topics",
       "Lifetime access",
-      "Theory & Image Course",
-      "Ai Teacher Chat",
+      "Theory with Image Course",
+      "AI Teacher Chat",
     ],
   },
   {
@@ -78,8 +78,8 @@ const plansFeartures = [
     features: [
       "Generate 10 Sub-Topics",
       "1 Month Access",
-      "Theory & Image Course",
-      "Ai Teacher Chat",
+      "Theory with Image Course",
+      "AI Teacher Chat",
       "Course In 23+ Languages",
       "Create Unlimited Course",
       "Video & Theory Course",
@@ -91,7 +91,7 @@ const plansFeartures = [
       "Generate 10 Sub-Topics",
       "1 Year Access",
       "Theory & Image Course",
-      "Ai Teacher Chat",
+      "AI Teacher Chat",
       "Course In 23+ Languages",
       "Create Unlimited Course",
       "Video & Theory Course",
