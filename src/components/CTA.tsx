@@ -27,7 +27,7 @@ const CTA = () => {
           // The ref is correctly applied to the section, so no need to apply it here again
         >
           <h2 className="text-3xl sm:text-4xl font-bold mb-4">
-            Ready to Revolutionize Your Learning?
+            Ready to Transform Your Learning?
           </h2>
           <p className="text-lg md:text-xl opacity-90 mb-8 max-w-3xl mx-auto">
             Join thousands of users transforming their education with {appName}. Start generating your personalized courses today!
